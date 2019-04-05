@@ -1,0 +1,3 @@
+[submodule "gym-checkers"]
+	path = gym-checkers
+	url = https://github.com/falcondai/gym-checkers
