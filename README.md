@@ -1,4 +1,4 @@
-# beta_zero
+# alpha_zero
 Implementation of AlphaZero in PyTorch. In particular, we want to make it play checkers well.
 
 Based on publicly available pseudocode from the publication
