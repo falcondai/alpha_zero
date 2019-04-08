@@ -1,69 +1,213 @@
-from typing import List
+import numpy as np
+
 
 class Node(object):
+    '''Node for keeping the rollout statistics. They are keyed by actions'''
 
     def __init__(self, prior: float):
         self.visit_count = 0
         self.to_play = -1
         self.prior = prior
         self.value_sum = 0
+        # Successor nodes keyed by legal actions
         self.children = {}
 
     def expanded(self):
         return len(self.children) > 0
 
-    def value(self):
+    def sampled_value(self):
+        # Empirical mean of the simulations, as evaluated by the learned value function
         if self.visit_count == 0:
             return 0
         return self.value_sum / self.visit_count
 
 
 class Game(object):
-    '''Abstraction of a turn-taking board game between two players'''
+    '''Abstraction of a turn-taking zero-sum board game between two players. Crucially, it needs to support two needs: game state updates (gameplay) and sampling of steps in finished games (training).
 
-    def __init__(self, history=None):
-        self.history = history or []
+    In particular, actions are represented by immutable objects (convenient as indices). Given a history of legal actions, we can re-create (fast-forward) the game state.
+
+    In addition, we take the absolute description of a game (similar to a referee's) and the two players will be identified by their turns, as the first-moving player and the second-moving player.'''
+
+    # The starting state of a game
+    initial_board = None
+
+    def __init__(self, history=[]):
+        # Rollout statistics
         self.child_visits = []
+        # Action space
         self.num_actions = 0
+        self.actions = []
+        # Initialize game states
+        self.board = self.initial_board
+        # First moving player starts
+        self.turn = 0
+        # Termination
+        self.terminated = False
+        # Fast forward to the state after taking actions in history
+        for action in self.history:
+            self.apply(action)
+
+    def is_first_player_turn(self) -> bool:
+        '''Whether this is the first player's turn'''
+        return self.turn == 0
 
     def terminal(self) -> bool:
         '''Whether the game has ended'''
-        # Game specific termination rules.
-        pass
-
-    def terminal_value(self, to_play) -> float:
-        '''The terminal value for the first player'''
-        pass
+        raise NotImplementedError
 
     def legal_actions(self):
-        '''Returns a collection of immutable actions that are legal in the current state'''
+        '''Returns a collection of immutable actions that are legal in the current state for the playing player'''
         return []
+
+    def apply(self, action):
+        '''Apply action and advance the game state'''
+        self.history.append(action)
+        # Update game state
+        raise NotImplementedError
+
+    def store_search_statistics(self, root):
+        sum_visits = sum(child.visit_count for child in root.children.itervalues())
+        self.child_visits.append([
+            root.children[a].visit_count / sum_visits
+            if a in root.children else 0
+            for a in range(self.num_actions)
+        ])
 
     def clone(self):
         '''Make a copy of the game'''
         return Game(list(self.history))
 
-    def apply(self, action):
-        '''Take action and advance the game state'''
-        self.history.append(action)
+    @staticmethod
+    def board_representation(state):
+        '''A stacked 2D representation of the board state from the absolute perspective'''
+        raise NotImplementedError
 
-    def store_search_statistics(self, root):
-        sum_visits = sum(
-            child.visit_count for child in root.children.itervalues())
-        self.child_visits.append([
-            root.children[a].visit_count / sum_visits if a in root.children else 0
-            for a in range(self.num_actions)
-        ])
+    @staticmethod
+    def abs2ego_value(player, value):
+        # Value is the first player's value
+        if player == 0:
+            return value
+        else:
+            # Zero sum assumption
+            return 0 - value
 
-    def make_image(self, state_index: int):
-        '''A stacked 2D representation of the board game state'''
-        return []
+    @staticmethod
+    def abs2ego_board(player, board_rep):
+        # Convert the absolute board representation to an ego-centric representation
+        raise NotImplementedError
+
+    # Deals with neural network model, needs to return in ego-centric views of the current player.
+    def make_image(self, state_index=None):
+        '''A stacked 2D representation of the board game state after the actions of history[:state_index]'''
+        if state_index is None:
+            # Draw the current state
+            rep = self.board_representation(self.state)
+        else:
+            game = Game(self.history[:state_index])
+            rep = self.board_representation(game.state)
+        ego_rep = self.abs2ego_board(game.turn, rep)
+        return ego_rep
 
     def make_target(self, state_index: int):
         '''Return the training targets of terminal game value given full history and the MCTS* visit counts'''
-        return (self.terminal_value(state_index % 2),
-                self.child_visits[state_index])
+        game = Game(self.history[:state_index])
+        return (
+            self.abs2ego_value(game.turn, self.terminal_value()),
+            self.child_visits[state_index],
+            )
 
-    def to_play(self) -> bool:
-        '''Whether this is the first player's turn'''
-        return len(self.history) % 2
+    def terminal_value(self) -> float:
+        '''The terminal value for the first player'''
+        raise NotImplementedError()
+
+
+class Network(object):
+    '''
+    The agent will be predict the value and moves for itself given the board represented in an ego-centric view. Need to be careful to flip the pieces and positions to make the board representation consistent for both players, e.g. the forward direction in chess.
+    '''
+
+    def inference(self, image):
+        # Ego-centric value and policy
+        return (0, {})
+
+    def get_weights(self):
+        # Returns the weights of this network.
+        return []
+
+
+class AlphaZeroConfig(object):
+    '''Hyperparameters'''
+
+    def __init__(self):
+        '''Default values from the AlphaZero paper'''
+        # Self-Play
+        self.num_actors = 5000
+
+        # A few starting moves are non-greedy (helps with exploring openings?)
+        self.num_sampling_moves = 30
+        # Maximum length of a game
+        # 512 for chess and shogi, 722 for Go.
+        self.max_moves = 512
+        # Number of rollouts
+        self.num_simulations = 800
+
+        # Root prior exploration noise.
+        # for chess, 0.03 for Go and 0.15 for shogi.
+        self.root_dirichlet_alpha = 0.3
+        self.root_exploration_fraction = 0.25
+
+        # UCB formula
+        self.pb_c_base = 19652
+        self.pb_c_init = 1.25
+
+        # Training
+        self.training_steps = int(700e3)
+        self.checkpoint_interval = int(1e3)
+        self.window_size = int(1e6)
+        self.batch_size = 4096
+
+        self.weight_decay = 1e-4
+        self.momentum = 0.9
+        # Schedule for chess and shogi, Go starts at 2e-2 immediately.
+        self.learning_rate_schedule = {
+            0: 2e-1,
+            100e3: 2e-2,
+            300e3: 2e-3,
+            500e3: 2e-4
+        }
+
+
+class ReplayBuffer(object):
+    def __init__(self, config: AlphaZeroConfig):
+        self.window_size = config.window_size
+        self.batch_size = config.batch_size
+        self.buffer = []
+
+    def save_game(self, game):
+        if len(self.buffer) > self.window_size:
+            self.buffer.pop(0)
+        self.buffer.append(game)
+
+    def sample_batch(self):
+        # Sample uniformly across positions.
+        move_sum = float(sum(len(g.history) for g in self.buffer))
+        games = np.random.choice(
+            self.buffer,
+            size=self.batch_size,
+            p=[len(g.history) / move_sum for g in self.buffer])
+        game_pos = [(g, np.random.randint(len(g.history))) for g in games]
+        return [(g.make_image(i), g.make_target(i)) for (g, i) in game_pos]
+
+
+class SharedStorage(object):
+    def __init__(self, initialize_network):
+        self._networks = {
+            -1: initialize_network(),
+        }
+
+    def latest_network(self) -> Network:
+        return self._networks[max(self._networks.iterkeys())]
+
+    def save_network(self, step: int, network: Network):
+        self._networks[step] = network
