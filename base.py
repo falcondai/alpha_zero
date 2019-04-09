@@ -42,9 +42,13 @@ class Game(object):
         self.board = self.initial_board
         # First moving player starts
         self.turn = 0
-        # Termination
-        self.terminated = False
+        # Terminal values for the first player
+        # 1 for win
+        # 0 for draw
+        # -1 for loss
+        self.game_value = None
         # Fast forward to the state after taking actions in history
+        self.history = history
         for action in self.history:
             self.apply(action)
 
@@ -54,7 +58,7 @@ class Game(object):
 
     def terminal(self) -> bool:
         '''Whether the game has ended'''
-        raise NotImplementedError
+        return self.game_value is not None
 
     def legal_actions(self):
         '''Returns a collection of immutable actions that are legal in the current state for the playing player'''
@@ -119,7 +123,9 @@ class Game(object):
 
     def terminal_value(self) -> float:
         '''The terminal value for the first player'''
-        raise NotImplementedError()
+        if self.game_value is None:
+            raise Exception('The game has not finished.')
+        return self.game_value
 
 
 class Network(object):
