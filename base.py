@@ -71,7 +71,7 @@ class Game(object):
         raise NotImplementedError
 
     def store_search_statistics(self, root):
-        sum_visits = sum(child.visit_count for child in root.children.itervalues())
+        sum_visits = sum(child.visit_count for child in root.children.values())
         self.child_visits.append([
             root.children[a].visit_count / sum_visits
             if a in root.children else 0
@@ -80,20 +80,22 @@ class Game(object):
 
     def clone(self):
         '''Make a copy of the game'''
-        return Game(list(self.history))
+        return self.__class__(list(self.history))
 
     def ego_board_representation(self):
         '''A stacked 2D representation of the board state from the ego-centric perspective of the current player'''
         raise NotImplementedError
 
     def ego_sample(self, state_index: int):
-        '''Return a training sample from a finished game'''
-        game = self.__class__(list(self.history[:state_index]))
-        # Ego-centric views of the current player
-        rep = game.ego_board_representation()
-        # Zero-sum game
-        ego_val = self.game_value if game.is_first_player_turn() else 0 - self.game_value
-        return rep, ego_val, self.child_visits[state_index]
+        '''Return a training sample from a finished game in an ego-centric representation'''
+        raise NotImplementedError
+
+    @staticmethod
+    def ego2abs_value(is_first_player: bool, ego_value: float):
+        return ego_value if is_first_player else (0 - ego_value)
+
+    def ego2abs_policy(is_first_player: bool, ego_policy):
+        raise NotImplementedError
 
     def terminal_value(self) -> float:
         '''The terminal value for the first player'''
@@ -107,9 +109,17 @@ class Network(object):
     The model will predict the value and moves for the current player given the board represented in an ego-centric view. Need to be careful to flip the pieces and positions to make the board representation consistent for both players, e.g. the forward direction in chess.
     '''
 
-    def inference(self, image):
-        # Ego-centric value and policy
-        return (0, {})
+    def __init__(self, board_size, num_actions):
+        self.board_size = board_size
+        self.num_actions = num_actions
+        # TODO: define neural network architecture
+
+    def inference(self, ego_board_rep):
+        # Ego-centric value and policy (in logits)
+        value = 0
+        # Logits of the policy distribution
+        search_visits = np.ones(self.num_actions)
+        return value, search_visits
 
     def get_weights(self):
         # Returns the weights of this network.
@@ -188,7 +198,7 @@ class SharedStorage(object):
         }
 
     def latest_network(self) -> Network:
-        return self._networks[max(self._networks.iterkeys())]
+        return self._networks[max(self._networks.keys())]
 
     def save_network(self, step: int, network: Network):
         self._networks[step] = network

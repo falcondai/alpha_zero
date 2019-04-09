@@ -70,7 +70,6 @@ class CheckersGame(Game):
 
     def apply(self, action_index):
         from_sq, to_sq = self.actions[action_index]
-        print('ff', from_sq, to_sq)
         board, turn, last_moved_piece, all_next_moves, winner = self.ch.move(from_sq, to_sq)
 
         # Terminate when one player wins
@@ -96,7 +95,7 @@ class CheckersGame(Game):
         # 2 opponent's men
         # 3 opponent's kings
         # 4 my last moved piece
-        # TODO try indicating the king row and skipping ego transform?
+        # QUESTION: try indicating the king row and skipping ego transform?
         rep = np.zeros((self.ch.size, self.ch.size, 5))
         if self.ch.turn == 'white':
             # Same as the absolute view
@@ -139,31 +138,69 @@ class CheckersGame(Game):
                 rep[row, col, 4] = 1
         return rep
 
+    def ego_sample(self, state_index: int):
+        # Fast forward
+        game = CheckersGame(list(self.history[:state_index]))
+        print(game.is_first_player_turn())
+        # Ego-centric views of the current player
+        rep = game.ego_board_representation()
+        # Zero-sum game
+        ego_val = self.game_value if game.is_first_player_turn() else (0 - self.game_value)
+        # Ego-centric actions
+        if game.is_first_player_turn():
+            # Invert actions for the first player
+            visits = np.zeros(self.num_actions)
+            for i in range(self.num_actions):
+                visits[self.abs2ego_ac[i]] = self.child_visits[state_index][i]
+        else:
+            visits = np.asarray(self.child_visits[state_index])
+        return rep, ego_val, visits
+
+    def ego2abs_policy(self, is_first_player, ego_policy):
+        if is_first_player:
+            policy = np.zeros(self.num_actions)
+            for ego_ac, pr in enumerate(ego_policy):
+                policy[self.ego2abs_ac[ego_ac]] = pr
+        else:
+            policy = ego_policy
+        return policy
+
 
 if __name__ == '__main__':
+    from base import AlphaZeroConfig, Network
+    from zero import play_game
+
     game = CheckersGame()
-    for i, ac in enumerate(game.actions):
-        print(i, ac)
-    game.ch.print_empty_board()
-    acs = game.legal_actions()
-    print(acs)
+    # for i, ac in enumerate(game.actions):
+    #     print(i, ac)
+    # game.ch.print_empty_board()
+    # acs = game.legal_actions()
+    # print(acs)
+    #
+    # while len(acs) > 0:
+    #     ac = acs.pop()
+    #     game.apply(ac)
+    #     acs = game.legal_actions()
+    # game.ch.print_board()
+    # print(game.ch.turn)
+    #
+    # rep = game.ego_board_representation()
+    # print(rep[:, :, 0])
+    # print(rep[:, :, 1])
+    # print(rep[:, :, 2])
+    # print(rep[:, :, 3])
+    # print(rep[:, :, 4])
+    #
+    # print(game.terminal_value())
+    # print(game.history)
+    # # Fake visit counts for testing
+    # game.child_visits += [list(range(game.num_actions))] * len(game.history)
+    # print(game.child_visits)
+    # print(game.ego_sample(20))
 
-    while len(acs) > 0:
-        ac = acs.pop()
-        game.apply(ac)
-        acs = game.legal_actions()
-    game.ch.print_board()
-    print(game.ch.turn)
-
-    rep = game.ego_board_representation()
-    print(rep[:, :, 0])
-    print(rep[:, :, 1])
-    print(rep[:, :, 2])
-    print(rep[:, :, 3])
-    print(rep[:, :, 4])
-
-    print(game.terminal_value())
-    print(game.history)
-    # Fake visit counts for testing
-    game.child_visits += [[10] * game.num_actions] * len(game.history)
-    print(game.ego_sample(20))
+    # Play with MCTS
+    config = AlphaZeroConfig()
+    config.num_simulations = 100
+    model = Network(game.ch.size, game.num_actions)
+    ga = play_game(config, CheckersGame, model)
+    print(ga.child_visits)
