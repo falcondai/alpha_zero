@@ -64,18 +64,19 @@ class CheckersGame(Game):
         self.ego2abs_ac = {ego_ac: ac for ac, ego_ac in self.abs2ego_ac.items()}
 
         # Fast forward to the last state by taking actions from history
-        self.history = history
-        for action in self.history:
+        self.history = []
+        for action in history:
             self.apply(action)
 
     def apply(self, action_index):
         from_sq, to_sq = self.actions[action_index]
+        print('ff', from_sq, to_sq)
         board, turn, last_moved_piece, all_next_moves, winner = self.ch.move(from_sq, to_sq)
 
         # Terminate when one player wins
-        if self.winner == 'black':
+        if winner == 'black':
             self.game_value = 1
-        elif self.winner == 'white':
+        elif winner == 'white':
             self.game_value = -1
 
         self.history.append(action_index)
@@ -86,7 +87,7 @@ class CheckersGame(Game):
         return action_idices
 
     def is_first_player_turn(self):
-        return self.turn == 'black'
+        return self.ch.turn == 'black'
 
     def ego_board_representation(self):
         # Channels
@@ -95,8 +96,9 @@ class CheckersGame(Game):
         # 2 opponent's men
         # 3 opponent's kings
         # 4 my last moved piece
+        # TODO try indicating the king row and skipping ego transform?
         rep = np.zeros((self.ch.size, self.ch.size, 5))
-        if self.turn == 'white':
+        if self.ch.turn == 'white':
             # Same as the absolute view
             for sq in self.ch.board['white']['men']:
                 row, col = self.ch.sq2pos(sq)
@@ -110,8 +112,8 @@ class CheckersGame(Game):
             for sq in self.ch.board['black']['kings']:
                 row, col = self.ch.sq2pos(sq)
                 rep[row, col, 3] = 1
-            if self._last_moved_piece is not None:
-                row, col = self.ch.sq2pos(self._last_moved_piece)
+            if self.ch._last_moved_piece is not None:
+                row, col = self.ch.sq2pos(self.ch._last_moved_piece)
                 rep[row, col, 4] = 1
         else:
             # Need to invert the board
@@ -131,8 +133,8 @@ class CheckersGame(Game):
                 sq = self.abs2ego_sq[sq]
                 row, col = self.ch.sq2pos(sq)
                 rep[row, col, 3] = 1
-            if self._last_moved_piece is not None:
-                sq = self.abs2ego_sq[self._last_moved_piece]
+            if self.ch._last_moved_piece is not None:
+                sq = self.abs2ego_sq[self.ch._last_moved_piece]
                 row, col = self.ch.sq2pos(sq)
                 rep[row, col, 4] = 1
         return rep
@@ -145,5 +147,23 @@ if __name__ == '__main__':
     game.ch.print_empty_board()
     acs = game.legal_actions()
     print(acs)
-    for ac in acs:
-        print(ac, game.abs2ego_ac[ac])
+
+    while len(acs) > 0:
+        ac = acs.pop()
+        game.apply(ac)
+        acs = game.legal_actions()
+    game.ch.print_board()
+    print(game.ch.turn)
+
+    rep = game.ego_board_representation()
+    print(rep[:, :, 0])
+    print(rep[:, :, 1])
+    print(rep[:, :, 2])
+    print(rep[:, :, 3])
+    print(rep[:, :, 4])
+
+    print(game.terminal_value())
+    print(game.history)
+    # Fake visit counts for testing
+    game.child_visits += [[10] * game.num_actions] * len(game.history)
+    print(game.ego_sample(20))

@@ -82,44 +82,18 @@ class Game(object):
         '''Make a copy of the game'''
         return Game(list(self.history))
 
-    @staticmethod
-    def board_representation(state):
-        '''A stacked 2D representation of the board state from the absolute perspective'''
+    def ego_board_representation(self):
+        '''A stacked 2D representation of the board state from the ego-centric perspective of the current player'''
         raise NotImplementedError
 
-    @staticmethod
-    def abs2ego_value(player, value):
-        # Value is the first player's value
-        if player == 0:
-            return value
-        else:
-            # Zero sum assumption
-            return 0 - value
-
-    @staticmethod
-    def abs2ego_board(player, board_rep):
-        # Convert the absolute board representation to an ego-centric representation
-        raise NotImplementedError
-
-    # Deals with neural network model, needs to return in ego-centric views of the current player.
-    def make_image(self, state_index=None):
-        '''A stacked 2D representation of the board game state after the actions of history[:state_index]'''
-        if state_index is None:
-            # Draw the current state
-            rep = self.board_representation(self.state)
-        else:
-            game = Game(self.history[:state_index])
-            rep = self.board_representation(game.state)
-        ego_rep = self.abs2ego_board(game.turn, rep)
-        return ego_rep
-
-    def make_target(self, state_index: int):
-        '''Return the training targets of terminal game value given full history and the MCTS* visit counts'''
-        game = Game(self.history[:state_index])
-        return (
-            self.abs2ego_value(game.turn, self.terminal_value()),
-            self.child_visits[state_index],
-            )
+    def ego_sample(self, state_index: int):
+        '''Return a training sample from a finished game'''
+        game = self.__class__(list(self.history[:state_index]))
+        # Ego-centric views of the current player
+        rep = game.ego_board_representation()
+        # Zero-sum game
+        ego_val = self.game_value if game.is_first_player_turn() else 0 - self.game_value
+        return rep, ego_val, self.child_visits[state_index]
 
     def terminal_value(self) -> float:
         '''The terminal value for the first player'''
@@ -130,7 +104,7 @@ class Game(object):
 
 class Network(object):
     '''
-    The agent will be predict the value and moves for itself given the board represented in an ego-centric view. Need to be careful to flip the pieces and positions to make the board representation consistent for both players, e.g. the forward direction in chess.
+    The model will predict the value and moves for the current player given the board represented in an ego-centric view. Need to be careful to flip the pieces and positions to make the board representation consistent for both players, e.g. the forward direction in chess.
     '''
 
     def inference(self, image):
@@ -197,13 +171,14 @@ class ReplayBuffer(object):
 
     def sample_batch(self):
         # Sample uniformly across positions.
-        move_sum = float(sum(len(g.history) for g in self.buffer))
+        # There are one more state at the end, after applying all moves.
+        move_sum = float(sum(len(g.history) + 1 for g in self.buffer))
         games = np.random.choice(
             self.buffer,
             size=self.batch_size,
-            p=[len(g.history) / move_sum for g in self.buffer])
-        game_pos = [(g, np.random.randint(len(g.history))) for g in games]
-        return [(g.make_image(i), g.make_target(i)) for (g, i) in game_pos]
+            p=[(len(g.history) + 1) / move_sum for g in self.buffer])
+        game_pos = [(g, np.random.randint(len(g.history) + 1)) for g in games]
+        return [g.ego_sample(i) for (g, i) in game_pos]
 
 
 class SharedStorage(object):
