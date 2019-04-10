@@ -138,6 +138,8 @@ class AlphaZeroConfig(object):
 
         # A few starting moves are non-greedy (helps with exploring openings?)
         self.num_sampling_moves = 30
+        # Chess typically has 70 half-moves
+        # Ref: https://chess.stackexchange.com/questions/2506/what-is-the-average-length-of-a-game-of-chess
         # Maximum length of a game
         # 512 for chess and shogi, 722 for Go.
         self.max_moves = 512

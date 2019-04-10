@@ -1,28 +1,29 @@
 import math
+import time
 from typing import List
 
 import numpy as np
 
 from base import AlphaZeroConfig, Node, Game, Network, ReplayBuffer, SharedStorage
-from backend import launch_job, train_network
+# from backend import launch_job, train_network
 
 
-def alpha_zero_train(config: AlphaZeroConfig):
-    '''
-    AlphaZero training is split into two independent parts: Network training and self-play data generation.
-    These two parts only communicate by transferring the latest network checkpoint from the training to the self-play, and the finished games from the self-play to the training.
-    '''
-    storage = SharedStorage()
-    replay_buffer = ReplayBuffer(config)
-
-    # Self play generates finished games
-    for i in range(config.num_actors):
-        launch_job(run_selfplay, config, storage, replay_buffer)
-
-    # Supervised learning on sampled finished games
-    train_network(config, storage, replay_buffer)
-
-    return storage.latest_network()
+# def alpha_zero_train(config: AlphaZeroConfig):
+#     '''
+#     AlphaZero training is split into two independent parts: Network training and self-play data generation.
+#     These two parts only communicate by transferring the latest network checkpoint from the training to the self-play, and the finished games from the self-play to the training.
+#     '''
+#     storage = SharedStorage()
+#     replay_buffer = ReplayBuffer(config)
+#
+#     # Self play generates finished games
+#     for i in range(config.num_actors):
+#         launch_job(run_selfplay, config, storage, replay_buffer)
+#
+#     # Supervised learning on sampled finished games
+#     train_network(config, storage, replay_buffer)
+#
+#     return storage.latest_network()
 
 
 def run_selfplay(config: AlphaZeroConfig, storage: SharedStorage, replay_buffer: ReplayBuffer):
@@ -33,17 +34,18 @@ def run_selfplay(config: AlphaZeroConfig, storage: SharedStorage, replay_buffer:
 
 
 def play_game(config: AlphaZeroConfig, Game, network: Network):
+    t0 = time.time()
     game = Game()
     while not game.terminal() and len(game.history) < config.max_moves:
         action, root = run_mcts(config, game, network)
         game.apply(action)
         game.store_search_statistics(root)
-        game.ch.print_board()
-
     if config.max_moves <= len(game.history):
         # XXX: Set the game value to draw if it continues for too long
         game.game_value = 0
-    print('value', game.game_value)
+    # Logging
+    game.ch.print_board()
+    print('value', game.game_value, 'time', '%.2f' % (time.time() - t0), 'len', len(game.history))
     return game
 
 
@@ -126,7 +128,7 @@ def evaluate(node: Node, game: Game, network: Network):
 
     # Expand the node.
     node.to_play = game.is_first_player_turn()
-    print('eval', policy_logits.max())
+    # print('eval', '%0.2f' % policy_logits.max())
     policy = {a: math.exp(policy_logits[a]) for a in game.legal_actions()}
     policy_sum = sum(policy.values())
     for action, p in policy.items():

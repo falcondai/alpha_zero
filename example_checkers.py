@@ -180,7 +180,7 @@ class CheckersNetwork(nn.Module, Network):
         self.board_size = 8
         self.num_actions = 170
         # AlphaGo Zero uses 19 or 39
-        self.num_residual_blocks = 0
+        self.num_residual_blocks = 2
 
         super().__init__()
         # Parameters for each layer
@@ -251,17 +251,20 @@ class CheckersNetwork(nn.Module, Network):
         return value_net, policy_net
 
     def inference(self, ego_board_rep):
-        # NOTE: PyTorch channel convention, BCHW
-        torch_rep = np.transpose(ego_board_rep, (0, 3, 1, 2))
-        torch_rep = np.ascontiguousarray(torch_rep, dtype=np.float32)
-        return self.forward(torch.from_numpy(torch_rep))
+        # NOTE: PyTorch channel convention, BCHW from TF convention BHWC.
+        torch_rep = ego_board_rep.transpose(1, 3)
+        # torch_rep = np.transpose(ego_board_rep, (0, 3, 1, 2))
+        # torch_rep = np.ascontiguousarray(torch_rep, dtype=np.float32)
+        return self.forward(torch_rep)
 
     def single_inference(self, ego_board_rep):
         # Single board, unsqueeze
         ego_board_rep = ego_board_rep[None, :]
+        ego_board_rep = np.ascontiguousarray(ego_board_rep, dtype=np.float32)
+        ego_board_rep = torch.from_numpy(ego_board_rep).cuda()
         self.eval()
         vals, logits = self.inference(ego_board_rep)
-        return vals[0, 0].detach().numpy(), logits[0].detach().numpy()
+        return vals[0, 0].detach().cpu().numpy(), logits[0].detach().cpu().numpy()
 
 
 def make_uniform_network():
@@ -315,16 +318,20 @@ if __name__ == '__main__':
     config.num_simulations = 100
     config.window_size = 20
     config.batch_size = 32
+    # A typical competitive Checkers game lasts for ~49 half-moves
+    # Ref: https://boardgames.stackexchange.com/questions/34659/how-many-turns-does-an-average-game-of-checkers-draughts-go-for
     config.max_moves = 100
 
     storage = SharedStorage(make_uniform_network)
     buffer = ReplayBuffer(config)
 
     model = CheckersNetwork()
-    optimizer = optim.SGD(model.parameters(), lr=config.learning_rate_schedule[0], momentum=config.momentum, weight_decay=config.weight_decay)
+    model.cuda()
+    # optimizer = optim.SGD(model.parameters(), lr=2e-2, momentum=config.momentum, weight_decay=config.weight_decay)
+    optimizer = optim.Adam(model.parameters(), lr=1e-3, weight_decay=config.weight_decay)
     val_loss = nn.MSELoss(reduction='sum')
 
-    for step in range(10):
+    for step in range(40):
         # Generate some games
         for i in range(1):
             actor = storage.latest_network()
@@ -342,9 +349,9 @@ if __name__ == '__main__':
         # Forward
         model.train()
         model.zero_grad()
-        boards = torch.from_numpy(boards)
-        vals = torch.from_numpy(vals).view(-1, 1)
-        dists = torch.from_numpy(dists)
+        boards = torch.from_numpy(boards).cuda()
+        vals = torch.from_numpy(vals).cuda().view(-1, 1)
+        dists = torch.from_numpy(dists).cuda()
         val_hats, logits = model.inference(boards)
         # Compute loss
         val_loss = nn.functional.mse_loss(val_hats, vals, reduction='sum')
@@ -355,3 +362,7 @@ if __name__ == '__main__':
         optimizer.step()
         # Save model
         storage.save_network(step, model)
+
+    # Commit trained model to disk
+    print('Saving model...')
+    torch.save(model.state_dict(), 'logs/model.pt')
