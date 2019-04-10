@@ -1,7 +1,9 @@
 import numpy as np
+import torch
+from torch import nn
 
 from checkers import Checkers
-from base import Game
+from base import Game, Network
 
 
 class CheckersGame(Game):
@@ -141,7 +143,6 @@ class CheckersGame(Game):
     def ego_sample(self, state_index: int):
         # Fast forward
         game = CheckersGame(list(self.history[:state_index]))
-        print(game.is_first_player_turn())
         # Ego-centric views of the current player
         rep = game.ego_board_representation()
         # Zero-sum game
@@ -166,11 +167,113 @@ class CheckersGame(Game):
         return policy
 
 
-if __name__ == '__main__':
-    from base import AlphaZeroConfig, Network
-    from zero import play_game
+class CheckersNetwork(nn.Module, Network):
+    '''
+    Based on the architecture of AlphaGo Zero. Convolutions with residual connections.
 
-    game = CheckersGame()
+    Ref: _Mastering the game of Go without human knowledge_ by Silver et al.
+    https://www.nature.com/articles/nature24270.pdf
+    '''
+
+    def __init__(self):
+        # Checkers
+        self.board_size = 8
+        self.num_actions = 170
+        # AlphaGo Zero uses 19 or 39
+        self.num_residual_blocks = 0
+
+        super().__init__()
+        # Parameters for each layer
+        # Convolution
+        self.conv = nn.Conv2d(in_channels=5, out_channels=256, kernel_size=3, padding=1)
+        self.batch_norm = nn.BatchNorm2d(256)
+
+        # Residual blocks
+        self.residual_blocks = nn.ModuleList()
+        for i in range(self.num_residual_blocks):
+            conv1 = nn.Conv2d(in_channels=256, out_channels=256, kernel_size=3, padding=1)
+            batch_norm1 = nn.BatchNorm2d(256)
+
+            conv2 = nn.Conv2d(in_channels=256, out_channels=256, kernel_size=3, padding=1)
+            batch_norm2 = nn.BatchNorm2d(256)
+            residual_block = nn.ModuleList((conv1, batch_norm1, conv2, batch_norm2))
+            self.residual_blocks.append(residual_block)
+
+        # Policy head
+        self.policy_conv = nn.Conv2d(in_channels=256, out_channels=2, kernel_size=1, stride=1, padding=0)
+        self.policy_batch_norm = nn.BatchNorm2d(2)
+        self.policy_fc = nn.Linear(self.board_size * self.board_size * 2, self.num_actions)
+
+        # Value head
+        self.value_conv = nn.Conv2d(in_channels=256, out_channels=1, kernel_size=1, stride=1, padding=0)
+        self.value_batch_norm = nn.BatchNorm2d(1)
+        self.value_fc1 = nn.Linear(self.board_size * self.board_size * 1, 256)
+        self.value_fc2 = nn.Linear(256, 1)
+
+        # Visualize the model
+        print(self)
+        print('# of parameters', sum(param.nelement() for param in self.parameters()))
+
+    def forward(self, im):
+        # Conv
+        net = self.conv(im)
+        net = self.batch_norm(net)
+        net = nn.functional.relu(net)
+
+        # Residual blocks
+        for conv1, batch_norm1, conv2, batch_norm2 in self.residual_blocks:
+            input = net
+            net = conv1(net)
+            net = batch_norm1(net)
+            net = nn.functional.relu(net)
+            net = conv2(net)
+            net = batch_norm2(net)
+            # Residual connection
+            net += input
+            net = nn.functional.relu(net)
+
+        # Heads
+        # Policy logits
+        policy_net = self.policy_conv(net)
+        policy_net = self.policy_batch_norm(policy_net)
+        policy_net = nn.functional.relu(policy_net)
+        policy_net = self.policy_fc(policy_net.view(-1, self.board_size * self.board_size * 2))
+
+        # Value
+        value_net = self.value_conv(net)
+        value_net = self.value_batch_norm(value_net)
+        value_net = nn.functional.relu(value_net)
+        value_net = self.value_fc1(value_net.view(-1, self.board_size * self.board_size * 1))
+        value_net = nn.functional.relu(value_net)
+        value_net = self.value_fc2(value_net)
+        value_net = torch.tanh(value_net)
+
+        return value_net, policy_net
+
+    def inference(self, ego_board_rep):
+        # NOTE: PyTorch channel convention, BCHW
+        torch_rep = np.transpose(ego_board_rep, (0, 3, 1, 2))
+        torch_rep = np.ascontiguousarray(torch_rep, dtype=np.float32)
+        return self.forward(torch.from_numpy(torch_rep))
+
+    def single_inference(self, ego_board_rep):
+        # Single board, unsqueeze
+        ego_board_rep = ego_board_rep[None, :]
+        self.eval()
+        vals, logits = self.inference(ego_board_rep)
+        return vals[0, 0].detach().numpy(), logits[0].detach().numpy()
+
+
+def make_uniform_network():
+    return Network(170)
+
+
+if __name__ == '__main__':
+    from base import AlphaZeroConfig, SharedStorage, ReplayBuffer
+    from zero import play_game
+    from torch import optim
+
+    # game = CheckersGame()
     # for i, ac in enumerate(game.actions):
     #     print(i, ac)
     # game.ch.print_empty_board()
@@ -198,9 +301,57 @@ if __name__ == '__main__':
     # print(game.child_visits)
     # print(game.ego_sample(20))
 
-    # Play with MCTS
+    # # Play with MCTS
+    # config = AlphaZeroConfig()
+    # config.num_simulations = 100
+    # # model = make_uniform_network()
+    # model = CheckersNetwork()
+    # ga = play_game(config, CheckersGame, model)
+    # print(ga.child_visits)
+
+    # AlphaZero
+    # Train for a few steps
     config = AlphaZeroConfig()
     config.num_simulations = 100
-    model = Network(game.ch.size, game.num_actions)
-    ga = play_game(config, CheckersGame, model)
-    print(ga.child_visits)
+    config.window_size = 20
+    config.batch_size = 32
+    config.max_moves = 100
+
+    storage = SharedStorage(make_uniform_network)
+    buffer = ReplayBuffer(config)
+
+    model = CheckersNetwork()
+    optimizer = optim.SGD(model.parameters(), lr=config.learning_rate_schedule[0], momentum=config.momentum, weight_decay=config.weight_decay)
+    val_loss = nn.MSELoss(reduction='sum')
+
+    for step in range(10):
+        # Generate some games
+        for i in range(1):
+            actor = storage.latest_network()
+            game = play_game(config, CheckersGame, actor)
+            buffer.save_game(game)
+        # Update model
+        batch = buffer.sample_batch()
+        boards = np.zeros((config.batch_size, 8, 8, 5), dtype=np.float32)
+        vals = np.zeros(config.batch_size, dtype=np.float32)
+        dists = np.zeros((config.batch_size, 170), dtype=np.float32)
+        for i, (board, val, dist) in enumerate(batch):
+            boards[i] = board
+            vals[i] = val
+            dists[i] = dist
+        # Forward
+        model.train()
+        model.zero_grad()
+        boards = torch.from_numpy(boards)
+        vals = torch.from_numpy(vals).view(-1, 1)
+        dists = torch.from_numpy(dists)
+        val_hats, logits = model.inference(boards)
+        # Compute loss
+        val_loss = nn.functional.mse_loss(val_hats, vals, reduction='sum')
+        policy_loss = (- dists * nn.functional.log_softmax(logits, 1)).sum()
+        loss = val_loss + policy_loss
+        print('step', step, val_loss, policy_loss, loss)
+        loss.backward()
+        optimizer.step()
+        # Save model
+        storage.save_network(step, model)

@@ -109,12 +109,14 @@ class Network(object):
     The model will predict the value and moves for the current player given the board represented in an ego-centric view. Need to be careful to flip the pieces and positions to make the board representation consistent for both players, e.g. the forward direction in chess.
     '''
 
-    def __init__(self, board_size, num_actions):
-        self.board_size = board_size
+    def __init__(self, num_actions):
         self.num_actions = num_actions
         # TODO: define neural network architecture
 
     def inference(self, ego_board_rep):
+        raise NotImplementedError
+
+    def single_inference(self, ego_board_rep):
         # Ego-centric value and policy (in logits)
         value = 0
         # Logits of the policy distribution
@@ -123,7 +125,7 @@ class Network(object):
 
     def get_weights(self):
         # Returns the weights of this network.
-        return []
+        raise NotImplementedError
 
 
 class AlphaZeroConfig(object):
@@ -181,20 +183,20 @@ class ReplayBuffer(object):
 
     def sample_batch(self):
         # Sample uniformly across positions.
-        # There are one more state at the end, after applying all moves.
-        move_sum = float(sum(len(g.history) + 1 for g in self.buffer))
+        # NOTE: There is one more state at the end, after applying all moves. But we don't have child visits at that state.
+        move_sum = float(sum(len(g.history) for g in self.buffer))
         games = np.random.choice(
             self.buffer,
             size=self.batch_size,
-            p=[(len(g.history) + 1) / move_sum for g in self.buffer])
-        game_pos = [(g, np.random.randint(len(g.history) + 1)) for g in games]
+            p=[len(g.history) / move_sum for g in self.buffer])
+        game_pos = [(g, np.random.randint(len(g.history))) for g in games]
         return [g.ego_sample(i) for (g, i) in game_pos]
 
 
 class SharedStorage(object):
-    def __init__(self, initialize_network):
+    def __init__(self, make_uniform_network):
         self._networks = {
-            -1: initialize_network(),
+            -1: make_uniform_network(),
         }
 
     def latest_network(self) -> Network:

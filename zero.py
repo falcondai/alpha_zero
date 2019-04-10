@@ -38,8 +38,12 @@ def play_game(config: AlphaZeroConfig, Game, network: Network):
         action, root = run_mcts(config, game, network)
         game.apply(action)
         game.store_search_statistics(root)
-        print(game.child_visits[-1])
         game.ch.print_board()
+
+    if config.max_moves <= len(game.history):
+        # XXX: Set the game value to draw if it continues for too long
+        game.game_value = 0
+    print('value', game.game_value)
     return game
 
 
@@ -87,15 +91,19 @@ def select_action(config: AlphaZeroConfig, game: Game, root: Node):
     return action
 
 
-# Select the child with the highest UCB score.
 def select_child(config: AlphaZeroConfig, node: Node):
+    '''
+    Select the child with the highest modified UCB score.
+    '''
     _, action, child = max((ucb_score(config, node, child), action, child)
                            for action, child in node.children.items())
     return action, child
 
 
-# The score for a node is based on its value, plus an exploration bonus based on the prior.
 def ucb_score(config: AlphaZeroConfig, parent: Node, child: Node):
+    '''
+    The score for a node is based on its value, plus an exploration bonus based on the prior.
+    '''
     pb_c = math.log((parent.visit_count + config.pb_c_base + 1) / config.pb_c_base) + config.pb_c_init
     pb_c *= math.sqrt(parent.visit_count) / (child.visit_count + 1)
     # XXX pi_hat influences the search priority
@@ -105,10 +113,12 @@ def ucb_score(config: AlphaZeroConfig, parent: Node, child: Node):
     return prior_score + value_score
 
 
-# We use the neural network to obtain a value and policy prediction.
 def evaluate(node: Node, game: Game, network: Network):
+    '''
+    We use the neural network to obtain a value and policy prediction.
+    '''
     ego_rep = game.ego_board_representation()
-    ego_value, ego_policy_logits = network.inference(ego_rep)
+    ego_value, ego_policy_logits = network.single_inference(ego_rep)
     # Transform ego-centric to absolute
     is_first_player = game.is_first_player_turn()
     value = game.ego2abs_value(is_first_player, ego_value)
@@ -116,6 +126,7 @@ def evaluate(node: Node, game: Game, network: Network):
 
     # Expand the node.
     node.to_play = game.is_first_player_turn()
+    print('eval', policy_logits.max())
     policy = {a: math.exp(policy_logits[a]) for a in game.legal_actions()}
     policy_sum = sum(policy.values())
     for action, p in policy.items():
@@ -123,15 +134,19 @@ def evaluate(node: Node, game: Game, network: Network):
     return value
 
 
-# At the end of a simulation, we propagate the evaluation all the way up the tree to the root.
 def backpropagate(search_path: List[Node], value: float, to_play):
+    '''
+    At the end of a simulation, we propagate the evaluation all the way up the tree to the root.
+    '''
     for node in search_path:
         node.value_sum += value if node.to_play == to_play else (0 - value)
         node.visit_count += 1
 
 
-# At the start of each search, we add dirichlet noise to the prior of the root to encourage the search to explore new actions.
 def add_exploration_noise(config: AlphaZeroConfig, node: Node):
+    '''
+    At the start of each search, we add dirichlet noise to the prior of the root to encourage the search to explore new actions.
+    '''
     actions = node.children.keys()
     noise = np.random.gamma(config.root_dirichlet_alpha, 1, len(actions))
     frac = config.root_exploration_fraction
