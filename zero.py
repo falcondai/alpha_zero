@@ -49,7 +49,7 @@ def play_game(config: AlphaZeroConfig, Game, network: Network):
     return game
 
 
-def run_mcts(config: AlphaZeroConfig, game: Game, network: Network):
+def run_mcts(config: AlphaZeroConfig, game: Game, network: Network, use_cpu: bool = False):
     '''
     Core Monte Carlo Tree Search algorithm.
     To decide on an action, we run N simulations, always starting at the root of the search tree and traversing the tree according to a modified UCB formula until we reach a leaf node.
@@ -57,11 +57,12 @@ def run_mcts(config: AlphaZeroConfig, game: Game, network: Network):
     This implementation keeps the rollout statistics in a separate tree structure.
     '''
     root = Node(0)
-    evaluate(root, game, network)
+    evaluate(root, game, network, use_cpu=use_cpu)
     add_exploration_noise(config, root)
 
     for _ in range(config.num_simulations):
         node = root
+        # NOTE: Clone a game possibly without its history. Only its game state is needed
         scratch_game = game.clone()
         search_path = [node]
 
@@ -75,8 +76,8 @@ def run_mcts(config: AlphaZeroConfig, game: Game, network: Network):
 
         # Expand and evaluate (Done with a rollout policy in vanilla MCTS)
         # NOTE: Instead of running a simulation (MC evaluation) for an unexpanded node, we evaluate it by the value network.
-        value = evaluate(node, scratch_game, network)
-        backpropagate(search_path, value, scratch_game.is_first_player_turn())
+        value = evaluate(node, scratch_game, network, use_cpu=use_cpu)
+        backpropagate(search_path, value)
         # print('search path', search_path)
         # print([(ac, child.visit_count) for ac, child in root.children.items()])
     return select_action(config, game, root), root
@@ -115,33 +116,35 @@ def ucb_score(config: AlphaZeroConfig, parent: Node, child: Node):
     return prior_score + value_score
 
 
-def evaluate(node: Node, game: Game, network: Network):
+def evaluate(node: Node, game: Game, network: Network, use_cpu: bool = False):
     '''
     We use the neural network to obtain a value and policy prediction.
     '''
     ego_rep = game.ego_board_representation()
-    ego_value, ego_policy_logits = network.single_inference(ego_rep)
+    ego_value, ego_policy_logits = network.single_inference(ego_rep, use_cpu=use_cpu)
     # Transform ego-centric to absolute
     is_first_player = game.is_first_player_turn()
     value = game.ego2abs_value(is_first_player, ego_value)
     policy_logits = game.ego2abs_policy(is_first_player, ego_policy_logits)
 
     # Expand the node.
-    node.to_play = game.is_first_player_turn()
+    node.is_first_player = is_first_player
     # print('eval', '%0.2f' % policy_logits.max())
     policy = {a: math.exp(policy_logits[a]) for a in game.legal_actions()}
     policy_sum = sum(policy.values())
     for action, p in policy.items():
         node.children[action] = Node(p / policy_sum)
+        # node.children[action] = Node(0)
     return value
 
 
-def backpropagate(search_path: List[Node], value: float, to_play):
+def backpropagate(search_path: List[Node], value: float):
     '''
     At the end of a simulation, we propagate the evaluation all the way up the tree to the root.
     '''
     for node in search_path:
-        node.value_sum += value if node.to_play == to_play else (0 - value)
+        # Ego-centric value at the node
+        node.value_sum += value if node.is_first_player else (0 - value)
         node.visit_count += 1
 
 

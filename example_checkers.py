@@ -14,9 +14,10 @@ class CheckersGame(Game):
         # 1 for win
         # 0 for draw
         # -1 for loss
+        # None for incomplete
         self.game_value = None
 
-        # Conventions:
+        # XXX Conventions:
         # - Black player moves first
         # - Ego-centric views assume the king row are at the top, i.e. starts at the bottom (Second player has the same view as absolute)
         self.ch = Checkers()
@@ -70,6 +71,12 @@ class CheckersGame(Game):
         for action in history:
             self.apply(action)
 
+    def clone(self):
+        game = CheckersGame()
+        state = self.ch.save_state()
+        game.ch.restore_state(state)
+        return game
+
     def apply(self, action_index):
         from_sq, to_sq = self.actions[action_index]
         board, turn, last_moved_piece, all_next_moves, winner = self.ch.move(from_sq, to_sq)
@@ -91,7 +98,7 @@ class CheckersGame(Game):
         return self.ch.turn == 'black'
 
     def ego_board_representation(self):
-        # Channels
+        # XXX Channels
         # 0 my men
         # 1 my kings
         # 2 opponent's men
@@ -257,11 +264,13 @@ class CheckersNetwork(nn.Module, Network):
         # torch_rep = np.ascontiguousarray(torch_rep, dtype=np.float32)
         return self.forward(torch_rep)
 
-    def single_inference(self, ego_board_rep):
+    def single_inference(self, ego_board_rep, use_cpu=False):
         # Single board, unsqueeze
         ego_board_rep = ego_board_rep[None, :]
         ego_board_rep = np.ascontiguousarray(ego_board_rep, dtype=np.float32)
-        ego_board_rep = torch.from_numpy(ego_board_rep).cuda()
+        ego_board_rep = torch.from_numpy(ego_board_rep)
+        if not use_cpu:
+            ego_board_rep = ego_board_rep.cuda()
         self.eval()
         vals, logits = self.inference(ego_board_rep)
         return vals[0, 0].detach().cpu().numpy(), logits[0].detach().cpu().numpy()
@@ -272,6 +281,7 @@ def make_uniform_network():
 
 
 if __name__ == '__main__':
+    import os
     from base import AlphaZeroConfig, SharedStorage, ReplayBuffer
     from zero import play_game
     from torch import optim
@@ -313,10 +323,11 @@ if __name__ == '__main__':
     # print(ga.child_visits)
 
     # AlphaZero
+    log_dir = 'logs/adam-1/'
     # Train for a few steps
     config = AlphaZeroConfig()
     config.num_simulations = 100
-    config.window_size = 20
+    config.window_size = 64
     config.batch_size = 32
     # A typical competitive Checkers game lasts for ~49 half-moves
     # Ref: https://boardgames.stackexchange.com/questions/34659/how-many-turns-does-an-average-game-of-checkers-draughts-go-for
@@ -331,7 +342,7 @@ if __name__ == '__main__':
     optimizer = optim.Adam(model.parameters(), lr=1e-3, weight_decay=config.weight_decay)
     val_loss = nn.MSELoss(reduction='sum')
 
-    for step in range(40):
+    for step in range(1000):
         # Generate some games
         for i in range(1):
             actor = storage.latest_network()
@@ -362,7 +373,10 @@ if __name__ == '__main__':
         optimizer.step()
         # Save model
         storage.save_network(step, model)
-
-    # Commit trained model to disk
+        if step % 30 == 9:
+            # Commit trained model to disk
+            print('Saving model...')
+            torch.save(model.state_dict(), os.path.join(log_dir, 'model-%i-l%.1f.pt' % (step, loss)))
+    # Last checkpoint
     print('Saving model...')
-    torch.save(model.state_dict(), 'logs/model.pt')
+    torch.save(model.state_dict(), os.path.join(log_dir, 'model-%i-l%.1f.pt' % (step, loss)))

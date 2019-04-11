@@ -6,7 +6,7 @@ class Node(object):
 
     def __init__(self, prior: float):
         self.visit_count = 0
-        self.to_play = -1
+        self.is_first_player = None
         self.prior = prior
         self.value_sum = 0
         # Successor nodes keyed by legal actions
@@ -17,6 +17,7 @@ class Node(object):
 
     def sampled_value(self):
         # Empirical mean of the simulations, as evaluated by the learned value function
+        # Ego-centric value for the current player
         if self.visit_count == 0:
             return 0
         return self.value_sum / self.visit_count
@@ -116,7 +117,7 @@ class Network(object):
     def inference(self, ego_board_rep):
         raise NotImplementedError
 
-    def single_inference(self, ego_board_rep):
+    def single_inference(self, ego_board_rep, use_cpu=False):
         # Ego-centric value and policy (in logits)
         value = 0
         # Logits of the policy distribution
