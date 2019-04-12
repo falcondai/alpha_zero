@@ -27,7 +27,7 @@ class AlphaZaiPlayer(Player):
         self.config.num_sampling_moves = 0
         self.config.num_simulations = num_simulations
         # QUESTION: Do we need to remove the exploration noise at root as well?
-        self.root_exploration_fraction = 0
+        self.root_exploration_fraction = 0.1
         self.policy_only = policy_only
         self.use_cpu = use_cpu
 
@@ -47,7 +47,7 @@ class AlphaZaiPlayer(Player):
         # Best legal action according to policy prediction
         _, ac = max([(policy_logits[a], a) for a in self.game.legal_actions()])
         pol_move = self.game.actions[ac]
-        # else:
+        print('V_hat_0(player) = %.2f' % val)
         if not self.policy_only:
             # MCTS with predicted values (instead of simulations)
             mcts_ac, root = run_mcts(self.config, self.game, self.model, use_cpu=self.use_cpu)
@@ -92,14 +92,14 @@ if __name__ == '__main__':
     # NOTE: 0.9/0.1 with random
     # model_path = 'logs/model-429-l56.6.pt'
     model_path = sys.argv[1]
+    print('Model path:', model_path)
     # model = CheckersNetwork()
     # model.load_state_dict(torch.load(model_path, map_location='cpu'))
     model = CheckersNetwork().cuda()
     model.load_state_dict(torch.load(model_path))
 
-    # model_path2 = 'logs/model.pt'
-    # model2 = CheckersNetwork()
-    # model2.load_state_dict(torch.load(model_path, map_location='cpu'))
+    model_early = CheckersNetwork().cuda()
+    model_early.load_state_dict(torch.load('logs/adam-0/model-789-l54.9.pt'))
 
     # Match setup
     n_matches = 10
@@ -110,17 +110,19 @@ if __name__ == '__main__':
         # Alpha-beta pruned minimax player
         # white_player = MinimaxPlayer('white', value_func=partial(material_value_adv, 'white', 2, 1), search_depth=4, seed=1)
         # Vanilla MCTS player
-        # white_player = MctsPlayer('white', exploration_coeff=1, max_rounds=100, seed=8 * i)
-        white_player = RandomPlayer('white', seed=None)
+        # white_player = MctsPlayer('white', exploration_coeff=1, max_rounds=100, seed=None)
+        # white_player = RandomPlayer('white', seed=None)
         # white_player = AlphaZaiPlayer(model, 'white', num_simulations=100, policy_only=False, use_cpu=False, seed=None)
+        white_player = AlphaZaiPlayer(model_early, 'white', num_simulations=100, policy_only=False, use_cpu=False, seed=None)
 
         # AlphaZero player
         # black_player = RandomPlayer('black', seed=None)
         # black_player = AlphaZaiPlayer(model, 'black', policy_only=True, use_cpu=True)
         # black_player = AlphaZaiPlayer(model, 'black', num_simulations=100, policy_only=False, use_cpu=True)
         black_player = AlphaZaiPlayer(model, 'black', num_simulations=100, policy_only=False, use_cpu=False, seed=None)
+        # black_player = MctsPlayer('black', exploration_coeff=1, max_rounds=100, seed=None)
 
-        winner = play_a_game(ch, black_player.next_move, white_player.next_move)
+        winner = play_a_game(ch, black_player.next_move, white_player.next_move, max_plies=300)
         black_wins += 1 if winner == 'black' else 0
         white_wins += 1 if winner == 'white' else 0
     print('Summary:', 'match', n_matches, 'black wins', black_wins / n_matches, 'white wins', white_wins / n_matches, 'draws', 1 - (black_wins + white_wins) / n_matches)

@@ -1,6 +1,7 @@
 import math
 import time
 from typing import List
+# from checkers import Checkers
 
 import numpy as np
 
@@ -78,8 +79,9 @@ def run_mcts(config: AlphaZeroConfig, game: Game, network: Network, use_cpu: boo
         # NOTE: Instead of running a simulation (MC evaluation) for an unexpanded node, we evaluate it by the value network.
         value = evaluate(node, scratch_game, network, use_cpu=use_cpu)
         backpropagate(search_path, value)
-        # print('search path', search_path)
-        # print([(ac, child.visit_count) for ac, child in root.children.items()])
+    # # Log
+    # for ac, child in root.children.items():
+    #     print(game.actions[ac], child.is_first_player == root.is_first_player, '%.2f' % child.sampled_value(), child.visit_count)
     return select_action(config, game, root), root
 
 
@@ -109,10 +111,13 @@ def ucb_score(config: AlphaZeroConfig, parent: Node, child: Node):
     '''
     pb_c = math.log((parent.visit_count + config.pb_c_base + 1) / config.pb_c_base) + config.pb_c_init
     pb_c *= math.sqrt(parent.visit_count) / (child.visit_count + 1)
+    # Classic UCB
+    # pb_c = 1 * np.sqrt(np.log(parent.visit_count) / child.visit_count) if child.visit_count > 0 else float('inf')
     # XXX pi_hat influences the search priority
     prior_score = pb_c * child.prior
     # XXX Should we use V_hat during testing? Maybe we should just use true terminal values. This way, value prediction is really used only for training (features).
-    value_score = child.sampled_value()
+    # NOTE: we are choosing a good move for the player of the parent node and each node returns the ego-centric value
+    value_score = child.sampled_value() if child.is_first_player == parent.is_first_player else (0 - child.sampled_value())
     return prior_score + value_score
 
 
@@ -136,6 +141,39 @@ def evaluate(node: Node, game: Game, network: Network, use_cpu: bool = False):
         node.children[action] = Node(p / policy_sum)
         # node.children[action] = Node(0)
     return value
+
+    # XXX: sanity check with simulated values
+    # node.is_first_player = game.is_first_player_turn()
+    # value = 0
+    # n_trials = 10
+    # max_plies = 200
+    # st = game.ch.save_state()
+    # for i in range(n_trials):
+    #     sim = Checkers()
+    #     sim.restore_state(st)
+    #     # Random policy
+    #     ply = 0
+    #     moves = sim.legal_moves()
+    #     # Check for a terminal state
+    #     if len(moves) == 0:
+    #         # One player wins
+    #         winner = 'white' if st[1] == 'black' else 'black'
+    #     else:
+    #         winner = None
+    #     while ply < max_plies and winner is None:
+    #         from_sq, to_sq = moves[np.random.randint(len(moves))]
+    #         board, turn, last_moved_piece, moves, winner = sim.move(from_sq, to_sq, skip_check=True)
+    #         ply += 1
+    #     # Returns the winner or None in a draw
+    #     if winner == 'black':
+    #         value += 1
+    #     elif winner == 'white':
+    #         value -= 1
+    # # Expand the node
+    # legal_actions = game.legal_actions()
+    # for ac in legal_actions:
+    #     node.children[ac] = Node(1 / len(legal_actions))
+    # return value / n_trials
 
 
 def backpropagate(search_path: List[Node], value: float):

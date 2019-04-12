@@ -323,26 +323,30 @@ if __name__ == '__main__':
     # print(ga.child_visits)
 
     # AlphaZero
-    log_dir = 'logs/adam-1/'
+    log_dir = 'logs/adam-0-1/'
     # Train for a few steps
     config = AlphaZeroConfig()
     config.num_simulations = 100
     config.window_size = 64
     config.batch_size = 32
+    config.num_sampling_moves = 20
     # A typical competitive Checkers game lasts for ~49 half-moves
     # Ref: https://boardgames.stackexchange.com/questions/34659/how-many-turns-does-an-average-game-of-checkers-draughts-go-for
-    config.max_moves = 100
+    config.max_moves = 200
 
     storage = SharedStorage(make_uniform_network)
     buffer = ReplayBuffer(config)
 
     model = CheckersNetwork()
     model.cuda()
+    # HACK: Continue from adam-0/
+    model.load_state_dict(torch.load('logs/adam-0/model-789-l54.9.pt'))
+    storage.save_network(0, model)
     # optimizer = optim.SGD(model.parameters(), lr=2e-2, momentum=config.momentum, weight_decay=config.weight_decay)
     optimizer = optim.Adam(model.parameters(), lr=1e-3, weight_decay=config.weight_decay)
     val_loss = nn.MSELoss(reduction='sum')
 
-    for step in range(1000):
+    for step in range(2000):
         # Generate some games
         for i in range(1):
             actor = storage.latest_network()
