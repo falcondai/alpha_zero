@@ -323,7 +323,7 @@ if __name__ == '__main__':
     # print(ga.child_visits)
 
     # AlphaZero
-    log_dir = 'logs/adam-0-2/'
+    log_dir = 'logs/adam-0/'
     # Train for a few steps
     config = AlphaZeroConfig()
     config.num_simulations = 400
@@ -344,9 +344,9 @@ if __name__ == '__main__':
 
     model = CheckersNetwork()
     model.cuda()
-    # HACK: Continue from adam-0-1/
-    model.load_state_dict(torch.load('logs/adam-0-1/model-1999-l52.9.pt'))
-    storage.save_network(0, model)
+    # # HACK: Continue from adam-0-1/
+    # model.load_state_dict(torch.load('logs/adam-0-1/model-1999-l52.9.pt'))
+    # storage.save_network(0, model)
     # optimizer = optim.SGD(model.parameters(), lr=2e-2, momentum=config.momentum, weight_decay=config.weight_decay)
     optimizer = optim.Adam(model.parameters(), lr=1e-4, weight_decay=config.weight_decay)
     val_loss = nn.MSELoss(reduction='sum')
