@@ -15,7 +15,7 @@ from zero import run_mcts
 class AlphaZaiPlayer(Player):
     '''AlphaZero player with a trained model'''
 
-    def __init__(self, model: CheckersNetwork, color, policy_only=False, num_simulations=100, seed=None, use_cpu=False):
+    def __init__(self, model: CheckersNetwork, color, policy_only=False, num_simulations=100, discount=0.99, seed=None, use_cpu=False):
         self.model = model
         # Which side is being played
         self.color = color
@@ -27,9 +27,10 @@ class AlphaZaiPlayer(Player):
         self.config.num_sampling_moves = 0
         self.config.num_simulations = num_simulations
         # QUESTION: Do we need to remove the exploration noise at root as well?
-        self.root_exploration_fraction = 0.1
+        self.root_exploration_fraction = 0
         self.policy_only = policy_only
         self.use_cpu = use_cpu
+        self.discount = discount
 
     def next_move(self, board, last_moved_piece):
         # Obtain the ego-centric view
@@ -50,7 +51,7 @@ class AlphaZaiPlayer(Player):
         print('V_hat_0(player) = %.2f' % val)
         if not self.policy_only:
             # MCTS with predicted values (instead of simulations)
-            mcts_ac, root = run_mcts(self.config, self.game, self.model, use_cpu=self.use_cpu)
+            mcts_ac, root = run_mcts(self.config, self.game, self.model, discount=self.discount, use_cpu=self.use_cpu)
             mcts_move = self.game.actions[mcts_ac]
             # Statistics
             print('policy prefers', pol_move, root.children[ac].visit_count, 'mcts prefers', mcts_move, root.children[mcts_ac].visit_count)
@@ -82,7 +83,7 @@ if __name__ == '__main__':
     import torch
     from checkers.agents.mcts import MctsPlayer
     import sys
-    # from checkers.agents.alpha_beta import MinimaxPlayer, material_value_adv
+    from checkers.agents.alpha_beta import MinimaxPlayer, material_value_adv
 
     # Load the trained model
     # NOTE: only as good as random
@@ -98,8 +99,8 @@ if __name__ == '__main__':
     model = CheckersNetwork().cuda()
     model.load_state_dict(torch.load(model_path))
 
-    model_early = CheckersNetwork().cuda()
-    model_early.load_state_dict(torch.load('logs/adam-0/model-789-l54.9.pt'))
+    # model_early = CheckersNetwork().cuda()
+    # model_early.load_state_dict(torch.load('logs/adam-0/model-789-l54.9.pt'))
 
     # Match setup
     n_matches = 10
@@ -108,18 +109,18 @@ if __name__ == '__main__':
     for i in range(n_matches):
         ch = Checkers()
         # Alpha-beta pruned minimax player
-        # white_player = MinimaxPlayer('white', value_func=partial(material_value_adv, 'white', 2, 1), search_depth=4, seed=1)
+        white_player = MinimaxPlayer('white', value_func=partial(material_value_adv, 'white', 2, 1), search_depth=4, seed=1)
         # Vanilla MCTS player
-        # white_player = MctsPlayer('white', exploration_coeff=1, max_rounds=100, seed=None)
+        # white_player = MctsPlayer('white', exploration_coeff=1, max_rounds=400, seed=None)
         # white_player = RandomPlayer('white', seed=None)
         # white_player = AlphaZaiPlayer(model, 'white', num_simulations=100, policy_only=False, use_cpu=False, seed=None)
-        white_player = AlphaZaiPlayer(model_early, 'white', num_simulations=100, policy_only=False, use_cpu=False, seed=None)
+        # white_player = AlphaZaiPlayer(model_early, 'white', num_simulations=100, policy_only=False, use_cpu=False, seed=None)
 
         # AlphaZero player
         # black_player = RandomPlayer('black', seed=None)
         # black_player = AlphaZaiPlayer(model, 'black', policy_only=True, use_cpu=True)
         # black_player = AlphaZaiPlayer(model, 'black', num_simulations=100, policy_only=False, use_cpu=True)
-        black_player = AlphaZaiPlayer(model, 'black', num_simulations=100, policy_only=False, use_cpu=False, seed=None)
+        black_player = AlphaZaiPlayer(model, 'black', num_simulations=400, policy_only=False, use_cpu=False, seed=None)
         # black_player = MctsPlayer('black', exploration_coeff=1, max_rounds=100, seed=None)
 
         winner = play_a_game(ch, black_player.next_move, white_player.next_move, max_plies=300)

@@ -34,11 +34,11 @@ def run_selfplay(config: AlphaZeroConfig, storage: SharedStorage, replay_buffer:
         replay_buffer.save_game(game)
 
 
-def play_game(config: AlphaZeroConfig, Game, network: Network):
+def play_game(config: AlphaZeroConfig, Game, network: Network, discount: float = 1):
     t0 = time.time()
     game = Game()
     while not game.terminal() and len(game.history) < config.max_moves:
-        action, root = run_mcts(config, game, network)
+        action, root = run_mcts(config, game, network, discount=discount)
         game.apply(action)
         game.store_search_statistics(root)
     if config.max_moves <= len(game.history):
@@ -50,7 +50,7 @@ def play_game(config: AlphaZeroConfig, Game, network: Network):
     return game
 
 
-def run_mcts(config: AlphaZeroConfig, game: Game, network: Network, use_cpu: bool = False):
+def run_mcts(config: AlphaZeroConfig, game: Game, network: Network, discount: float = 1, use_cpu: bool = False):
     '''
     Core Monte Carlo Tree Search algorithm.
     To decide on an action, we run N simulations, always starting at the root of the search tree and traversing the tree according to a modified UCB formula until we reach a leaf node.
@@ -78,7 +78,7 @@ def run_mcts(config: AlphaZeroConfig, game: Game, network: Network, use_cpu: boo
         # Expand and evaluate (Done with a rollout policy in vanilla MCTS)
         # NOTE: Instead of running a simulation (MC evaluation) for an unexpanded node, we evaluate it by the value network.
         value = evaluate(node, scratch_game, network, use_cpu=use_cpu)
-        backpropagate(search_path, value)
+        backpropagate(search_path, value, discount=discount)
     # # Log
     # for ac, child in root.children.items():
     #     print(game.actions[ac], child.is_first_player == root.is_first_player, '%.2f' % child.sampled_value(), child.visit_count)
@@ -176,13 +176,16 @@ def evaluate(node: Node, game: Game, network: Network, use_cpu: bool = False):
     # return value / n_trials
 
 
-def backpropagate(search_path: List[Node], value: float):
+def backpropagate(search_path: List[Node], value: float, discount: float = 1):
     '''
     At the end of a simulation, we propagate the evaluation all the way up the tree to the root.
     '''
-    for node in search_path:
+    running_discount = 1
+    for node in search_path[::-1]:
         # Ego-centric value at the node
-        node.value_sum += value if node.is_first_player else (0 - value)
+        # XXX: Discount the game value by its depth. This helps remove some overly optimistic estimate due to random "mistakes". Quicker win is better.
+        running_discount *= discount
+        node.value_sum += running_discount * (value if node.is_first_player else (0 - value))
         node.visit_count += 1
 
 
